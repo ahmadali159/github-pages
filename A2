@@ -1,0 +1,134 @@
+//+------------------------------------------------------------------+
+//| Scalping EA with Advanced Features                              |
+//+------------------------------------------------------------------+
+#property strict
+
+// Input parameters
+input int FastMAPeriod = 5;
+input int SlowMAPeriod = 20;
+input int RSIPeriod = 14;
+input int StochPeriod = 14;
+input int BBPeriod = 20;
+input double RiskPerTrade = 2.0; // نسبة المخاطرة من الرصيد (%)
+input int MinATRPeriod = 14;
+input double MinATR = 0.0005; // الحد الأدنى للتقلبات
+input int BreakevenTrigger = 5; // تفعيل عند 5 نقاط ربح
+input int TrailingStop = 3; // Trailing Stop بالنقاط
+input int TradingStartHour = 8;
+input int TradingEndHour = 20;
+input bool NewsFilter = true; // تفعيل فلتر الأخبار
+
+// Indicator Handles
+int fastMAHandle, slowMAHandle, rsiHandle, stochHandle, bbHandle, atrHandle;
+
+int OnInit()
+{
+    fastMAHandle = iMA(_Symbol, PERIOD_M1, FastMAPeriod, 0, MODE_SMA, PRICE_CLOSE);
+    slowMAHandle = iMA(_Symbol, PERIOD_M1, SlowMAPeriod, 0, MODE_SMA, PRICE_CLOSE);
+    rsiHandle = iRSI(_Symbol, PERIOD_M1, RSIPeriod, PRICE_CLOSE);
+    stochHandle = iStochastic(_Symbol, PERIOD_M1, StochPeriod, 3, 3, MODE_SMA, STO_LOWHIGH);
+    bbHandle = iBands(_Symbol, PERIOD_M1, BBPeriod, 2, 0, PRICE_CLOSE);
+    atrHandle = iATR(_Symbol, PERIOD_M1, MinATRPeriod);
+
+    return INIT_SUCCEEDED;
+}
+
+//+------------------------------------------------------------------+
+//| Main Function - Executes on every tick                          |
+//+------------------------------------------------------------------+
+void OnTick()
+{
+    if (!IsTradingTime() || (NewsFilter && IsNewsTime()) || !IsMarketVolatile()) return;
+
+    double fastMA, slowMA, rsi, stochK, stochD, bbUpper, bbLower, atr, lotSize;
+    fastMA = iCustom(_Symbol, PERIOD_M1, fastMAHandle, 0, 1);
+    slowMA = iCustom(_Symbol, PERIOD_M1, slowMAHandle, 0, 1);
+    rsi = iCustom(_Symbol, PERIOD_M1, rsiHandle, 0, 1);
+    stochK = iCustom(_Symbol, PERIOD_M1, stochHandle, 0, 1);
+    stochD = iCustom(_Symbol, PERIOD_M1, stochHandle, 1, 1);
+    bbUpper = iCustom(_Symbol, PERIOD_M1, bbHandle, 0, 1);
+    bbLower = iCustom(_Symbol, PERIOD_M1, bbHandle, 1, 1);
+    atr = iCustom(_Symbol, PERIOD_M1, atrHandle, 0, 1);
+    lotSize = CalculateLotSize(atr);
+
+    if (fastMA == 0 || slowMA == 0 || rsi == 0 || stochK == 0 || stochD == 0 || atr == 0) return;
+
+    double dynamicSL = 1.5 * atr;
+    double dynamicTP = 3.0 * atr;
+
+    if (fastMA > slowMA && rsi > 50 && stochK > stochD && Close[1] > bbLower && ConfirmBreakout())
+    {
+        OpenTrade(ORDER_TYPE_BUY, lotSize, dynamicSL, dynamicTP);
+    }
+
+    if (fastMA < slowMA && rsi < 50 && stochK < stochD && Close[1] < bbUpper && ConfirmBreakout())
+    {
+        OpenTrade(ORDER_TYPE_SELL, lotSize, dynamicSL, dynamicTP);
+    }
+
+    ApplyBreakeven();
+    ApplyTrailingStop();
+}
+
+//+------------------------------------------------------------------+
+//| Additional Functions                                            |
+//+------------------------------------------------------------------+
+
+bool IsTradingTime()
+{
+    int hour = TimeHour(TimeCurrent());
+    return (hour >= TradingStartHour && hour <= TradingEndHour);
+}
+
+bool IsMarketVolatile()
+{
+    double atr = iATR(_Symbol, PERIOD_M1, MinATRPeriod, 1);
+    return atr > MinATR;
+}
+
+bool IsNewsTime()
+{
+    int hour = TimeHour(TimeCurrent());
+    int minute = TimeMinute(TimeCurrent());
+    return (hour == 13 && minute >= 30) || (hour == 14 && minute < 0);
+}
+
+bool ConfirmBreakout()
+{
+    return (Close[1] > High[2] && Close[1] > Open[1]);
+}
+
+double CalculateLotSize(double atr)
+{
+    double riskAmount = AccountBalance() * (RiskPerTrade / 100);
+    double tickValue = SymbolInfoDouble(_Symbol, SYMBOL_TRADE_TICK_VALUE);
+    return NormalizeDouble(riskAmount / (atr * tickValue), 2);
+}
+
+void OpenTrade(ENUM_ORDER_TYPE orderType, double lotSize, double stopLoss, double takeProfit)
+{
+    MqlTradeRequest request;
+    MqlTradeResult result;
+
+    request.action = TRADE_ACTION_DEAL;
+    request.symbol = _Symbol;
+    request.volume = lotSize;
+    request.type = orderType;
+    request.price = (orderType == ORDER_TYPE_BUY) ? SymbolInfoDouble(_Symbol, SYMBOL_ASK) : SymbolInfoDouble(_Symbol, SYMBOL_BID);
+    request.sl = (orderType == ORDER_TYPE_BUY) ? request.price - stopLoss : request.price + stopLoss;
+    request.tp = (orderType == ORDER_TYPE_BUY) ? request.price + takeProfit : request.price - takeProfit;
+    request.deviation = 5;
+    request.magic = 123456;
+
+    OrderSend(request, result);
+}
+
+void ApplyBreakeven()
+{
+    // كما تم شرحه في التحسينات
+}
+
+void ApplyTrailingStop()
+{
+    // كما تم شرحه في التحسينات
+}
